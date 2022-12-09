@@ -1,0 +1,312 @@
+security  passwords min-length [minimal-length]
+enable secret [secret-password]
+service password–encryption
+
+# configurations for ports
+line [port](console 0/vty 0 15) 
+
+  # use local database for login
+  login local
+
+  # disconnect after some time being idle
+  exec–timeout [minutes-idle] 0
+
+
+# configuration for interfaces
+interface [interface]
+
+  # disable cisco discovery protocol (CDP)
+  no cdp enable
+  
+  # disable logins for X seconds after Y failed login attempts within Z seconds.
+  login block–for [X] attempts [Y] within [Z]
+
+### CORP ROUTER
+
+zone security CORP–INSIDE
+exit
+zone security INTERNET
+exit
+class–map type inspect match–any INSIDE_PROTOCOLS
+match protocol http
+match protocol tcp
+match protocol udp
+match protocol icmp
+match protocol dns
+exit
+policy–map type inspect INSIDE_TO_INTERNET
+class type inspect INSIDE_PROTOCOLS
+inspect
+exit
+exit
+class–map type inspect match–any DMZ_WEB
+match protocol http
+match protocol dns
+exit
+policy–map type inspect INTERNET_TO_DMZWEB
+class type inspect DMZ_WEB
+pass
+exit
+exit
+zone–pair security IN_TO_OUT_ZONE source CORP–INSIDE destination INTERNET
+service–policy type inspect INSIDE_TO_INTERNET
+exit
+zone–pair security INTERNET_TO_DMZ_ZONE source INTERNET destination CORP–INSIDE
+service–policy type inspect INTERNET_TO_DMZWEB
+exit
+interface serial0/0/0
+zone–member security INTERNET
+exit
+interface serial0/0/1
+zone–member security CORP–INSIDE
+exit
+
+### INTERNAL ROUTER
+
+enable
+configure terminal
+security passwords min-length 10
+enable secret ciscoclass
+service password-encryption
+login on-failure log
+login on-success log
+line console 0
+login local
+exec-timeout 20 0
+line vty 0 15
+login local
+exec-timeout 20 0
+exit
+interface serial0/0/0
+no cdp enable
+login block-for 30 attempts 3 within 60
+ntp server 172.16.25.2 key 0
+ntp update-calendar
+service timestamps log datetime msec
+logging host 172.16.25.2
+ip domain-name theccnas.com
+crypto key generate rsa
+1024
+
+ip ssh version 2
+ip ssh time-out 90
+ip ssh authentication-retries 2
+line vty 0 4
+transport input ssh
+exit
+line vty 5 15
+transport input ssh
+exit
+aaa new-model
+Radius-server host 172.16.25.2 key corpradius
+aaa authentication login default group radius local
+aaa authorization exec default local
+line vty 0 4
+login authentication default
+line vty 5 15
+login authentication default
+line con 0
+login authentication default
+exit
+access-list 12 permit host 172.16.25.5
+line vty 0 15
+access-class 12 in
+exit
+ip ips config location flash:
+ip ips name corpips
+ip ips signature-category
+category all
+retired true
+exit
+category ios_ips basic
+retired false
+exit
+exit
+
+interface Gi0/0
+ip ips corpips out
+exit
+ip ips signature-definition
+signature 2004 0
+status
+retired false
+enable true
+exit
+engine
+event-action produce-alert
+event-action deny-packet-inline
+exit
+exit
+exit
+
+exit
+
+### SWITCH 1
+
+configure terminal
+interface range fastEthernet0/1-22
+spanning-tree portfast
+spanning-tree bpduguard enable
+switchport port-security
+switchport port-security violation shutdown
+switchport port-security mac-address sticky
+switchport port-security maximum 2
+exit
+interface range fastethernet 0/2-4
+shutdown
+interface range fastethernet 0/6-10
+shutdown
+interface range fastethernet 0/13-22
+shutdown
+exit
+interface range fa0/23-24
+switchport nonegotiate
+switchport trunk native vlan 50
+
+### SWITCH 4
+
+configure terminal
+interface range fa0/23-24
+switchport mode trunk
+switchport nonegotiate
+switchport trunk native vlan 50
+
+### HQ ASA
+
+enable
+Thecar1Admin
+conf term
+domain-name thecar1.com
+
+interface vlan 1
+ip address 192.168.10.1 255.255.255.0
+nameif inside
+Security-level 100
+no shutdown
+exit
+interface vlan 2
+ip add 209.165.200.253 255.255.255.240
+nameif outside
+security-level 0
+no shutdown
+exit
+interface vlan 3
+No forward int vlan 1
+ip add 192.168.20.1 255.255.255.0
+nameif dmz
+security-level 70
+no shutdown
+exit
+
+interface e0/1
+switchport acces vlan 1
+no shutdown
+exit
+interface e0/0
+switchport acces vlan 2
+no shutdown
+exit
+int e0/2
+switchport acces vlan 3
+no shutdown
+exit
+
+dhcpd add 192.168.10.25-192.168.10.35 inside
+dhcpd dns 192.168.10.10 interface inside
+dhcpd option 3 ip 192.168.10.1
+dhcpd enable inside
+
+ntp authenticate
+ntp authentication-key 1 md5 corpkey
+ntp server 192.168.10.10
+ntp trusted-key 1
+
+aaa authentication ssh console LOCAL
+ssh 192.168.10.5 255.255.255.255 inside 
+ssh timeout 20
+object network inside-nat
+subnet 192.168.10.0 255.255.255.0
+nat (inside,outside) dynamic interface
+exit
+configure terminal 
+object network dmz-dns-server
+host 192.168.20.5
+nat (dmz,outside) static 209.165.200.242
+exit
+configure terminal 
+object network dmz-web-server
+host 192.168.20.2
+nat (dmz,outside) static 209.165.200.241
+exit
+configure terminal 
+class-map inspection_default
+match default-inspection-traffic
+policy-map global_policy
+class inspection_default
+inspect dns
+inspect ftp 
+inspect http 
+inspect icmp
+exit
+service-policy global_policy global
+access-list OUTSIDE-TO-DMZ extended permit tcp any host 209.165.200.241 eq 80
+access-list OUTSIDE-TO-DMZ extended permit tcp any host 209.165.200.242 eq 53
+access-list OUTSIDE-TO-DMZ extended permit udp any host 209.165.200.242 eq 53
+access-list OUTSIDE-TO-DMZ extended permit tcp host 198.133.219.35 host 209.165.200.241 eq ftp
+access-group OUTSIDE-TO-DMZ in interface outside
+
+### HQ ROUTER
+
+CORPADMIN
+Ciscoccnas
+enable
+ciscoclass
+conf ter
+
+access-list 120 permit ip 209.165.200.240 0.0.0.15 198.133.219.32 0.0.0.31
+crypto isakmp policy 10
+encryption aes 256
+authentication pre-share 
+group 2
+lifetime 86400
+hash sha
+exit
+crypto isakmp key Vpnpass101 address 209.165.200.226 
+crypto ipsec transform-set VPN-SET esp-3des esp-sha-hmac 
+crypto map VPN-MAP 10 ipsec-isakmp
+set peer 209.165.200.226 
+set transform-set VPN-SET 
+match address 120 
+exit
+interface s0/0/0 
+crypto map VPN-MAP
+end   
+copy running-config startup-config
+
+### Branch Router
+
+CORPADMIN
+Ciscoccnas
+enable
+ciscoclass
+conf ter
+
+access-list 120 permit ip 209.165.200.240 0.0.0.15 198.133.219.32 0.0.0.31
+crypto isakmp policy 10
+encryption aes 256
+authentication pre-share 
+group 2
+lifetime 86400
+hash sha
+exit
+crypto isakmp key Vpnpass101 address 198.133.219.2
+crypto ipsec transform-set VPN-SET esp-3des esp-sha-hmac 
+crypto map VPN-MAP 10 ipsec-isakmp
+set peer 198.133.219.2 
+set transform-set VPN-SET 
+match address 120 
+exit
+interface s0/0/0 
+crypto map VPN-MAP
+end   
+copy running-config startup-config
