@@ -23,73 +23,45 @@ interface [interface]
 
 ### CORP ROUTER
 
-zone security CORP–INSIDE
+# create zone
+zone security [zone-name]
 exit
-zone security INTERNET
-exit
-class–map type inspect match–any INSIDE_PROTOCOLS
-match protocol http
-match protocol tcp
-match protocol udp
-match protocol icmp
-match protocol dns
-exit
-policy–map type inspect INSIDE_TO_INTERNET
-class type inspect INSIDE_PROTOCOLS
-inspect
-exit
-exit
-class–map type inspect match–any DMZ_WEB
-match protocol http
-match protocol dns
-exit
-policy–map type inspect INTERNET_TO_DMZWEB
-class type inspect DMZ_WEB
-pass
-exit
-exit
-zone–pair security IN_TO_OUT_ZONE source CORP–INSIDE destination INTERNET
-service–policy type inspect INSIDE_TO_INTERNET
-exit
-zone–pair security INTERNET_TO_DMZ_ZONE source INTERNET destination CORP–INSIDE
-service–policy type inspect INTERNET_TO_DMZWEB
-exit
-interface serial0/0/0
-zone–member security INTERNET
-exit
-interface serial0/0/1
-zone–member security CORP–INSIDE
-exit
+
+# map protocols
+class–map type inspect match–any [group-name]
+  match protocol [protocol](tcp/udp/icmp/dns)
+
+# create policy
+policy–map type inspect [policy-name]
+  class type inspect [group-name]
+    inspect/pass
+  
+  class–map type inspect match–any [group-name]
+     match protocol [protocol](tcp/udp/icmp/dns)
+
+# pair zones
+zone–pair security [name] source [inside-zone-name] destination [destination-zone-name]
+
+# assign zones to interface
+interface [interface]
+  zone–member security [zone-pair-name]
+
 
 ### INTERNAL ROUTER
 
-enable
-configure terminal
-security passwords min-length 10
-enable secret ciscoclass
-service password-encryption
-login on-failure log
-login on-success log
-line console 0
-login local
-exec-timeout 20 0
-line vty 0 15
-login local
-exec-timeout 20 0
-exit
-interface serial0/0/0
-no cdp enable
-login block-for 30 attempts 3 within 60
-ntp server 172.16.25.2 key 0
+ntp server [ip] key 0
 ntp update-calendar
 service timestamps log datetime msec
-logging host 172.16.25.2
-ip domain-name theccnas.com
-crypto key generate rsa
-1024
+logging host [logging-host-ip]
+ip domain-name [domain]
 
+# generate rsa keys
+crypto key generate rsa
+[key-size]
+
+# enable ssh
 ip ssh version 2
-ip ssh time-out 90
+ip ssh time-out [timeout]
 ip ssh authentication-retries 2
 line vty 0 4
 transport input ssh
